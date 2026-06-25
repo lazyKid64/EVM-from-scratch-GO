@@ -1,0 +1,20 @@
+.DS_Store
+rust/target
+
+# Go SDK files and directories
+/api/
+/bin/
+/doc/
+/lib/
+/misc/
+/pkg/
+/src/
+/test/
+/greetings/
+/CONTRIBUTING.md
+/LICENSE
+/PATENTS
+/SECURITY.md
+/VERSION
+/go.env
+/codereview.cfg
