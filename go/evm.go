@@ -12,6 +12,7 @@ package evm
 
 import (
 	"math/big"
+	"golang.org/x/crypto/sha3"
 )
 
 func push(stack []*big.Int, value *big.Int) []*big.Int {
@@ -51,10 +52,42 @@ func toUnsigned(x *big.Int) *big.Int {
 	return result
 }
 
+func expandMemory(memory []byte, offset int, size int) []byte {
+	if offset+size > len(memory) {
+		newSize := ((offset + size + 31) / 32) * 32
+		newMem := make([]byte, newSize)
+		copy(newMem, memory)
+		return newMem
+	}
+	return memory
+}
+type Tx struct {
+	To       *big.Int
+	From     *big.Int
+	Origin   *big.Int
+	GasPrice *big.Int
+	Value    *big.Int
+	Data     []byte
+}
+
 // Run runs the EVM code and returns the stack and a success indicator.
-func Evm(code []byte) ([]*big.Int, bool) {
+func Evm(code []byte, tx Tx) ([]*big.Int, bool) {
 	var stack []*big.Int
+	var memory []byte
 	pc := 0
+
+	validJumpDests := make(map[int]bool)
+	for i := 0; i < len(code); {
+		op := code[i]
+		if op == 0x5b {
+			validJumpDests[i] = true
+		}
+		if op >= 0x60 && op <= 0x7F {
+			i += int(op - 0x60 + 1) + 1
+		} else {
+			i++
+		}
+	}
 
 	for pc < len(code) {
 		op := code[pc]
@@ -68,60 +101,15 @@ func Evm(code []byte) ([]*big.Int, bool) {
 		case 0x5f: // PUSH0
 			stack = push(stack, new(big.Int).SetInt64(0))
 
-		case 0x60: // PUSH1
-			if pc >= len(code) {
+		case 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f: // PUSH1 to PUSH32
+			size := int(op - 0x60 + 1)
+			if pc+size-1 >= len(code) {
 				return stack, false
 			}
-			stack = push(stack, new(big.Int).SetInt64(int64(code[pc])))
-			pc++
-
-		case 0x61: // PUSH2
-			if pc+1 >= len(code) {
-				return stack, false
-			}
-			value := new(big.Int).SetBytes(code[pc : pc+2])
+			value := new(big.Int).SetBytes(code[pc : pc+size])
 			stack = push(stack, value)
-			pc += 2
+			pc += size
 
-		case 0x63: //PUSH4
-			if pc+3 >= len(code) {
-				return stack, false
-			}
-			value := new(big.Int).SetBytes(code[pc : pc+4])
-			stack = push(stack, value)
-			pc += 4
-
-		case 0x65: // PUSH6
-			if pc+5 >= len(code) {
-				return stack, false
-			}
-			value := new(big.Int).SetBytes(code[pc : pc+6])
-			stack = push(stack, value)
-			pc += 6
-
-		case 0x69: // PUSH10
-			if pc+9 >= len(code) {
-				return stack, false
-			}
-			value := new(big.Int).SetBytes(code[pc : pc+10])
-			stack = push(stack, value)
-			pc += 10
-
-		case 0x6A: // PUSH11
-			if pc+10 >= len(code) {
-				return stack, false
-			}
-			value := new(big.Int).SetBytes(code[pc : pc+11])
-			stack = push(stack, value)
-			pc += 11
-
-		case 0x7F: // PUSH32
-			if pc+31 >= len(code) {
-				return stack, false
-			}
-			value := new(big.Int).SetBytes(code[pc : pc+32])
-			stack = push(stack, value)
-			pc += 32
 
 		case 0x50: // POP {
 			if len(stack) == 0 {
@@ -440,6 +428,7 @@ func Evm(code []byte) ([]*big.Int, bool) {
 			}
 			stack = push(stack, res)
 
+
 		case 0x1B: // SHL
 			if len(stack) < 2 {
 				return stack, false
@@ -489,13 +478,206 @@ func Evm(code []byte) ([]*big.Int, bool) {
 			}
 			stack = push(stack, res)
 
-		case 0x80: // DUP1
+		case 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f: //DUP1 to DUP16
+			n := int(op - 0x80 + 1)
+			if len(stack) < n {
+				return stack, false
+			}
+			value := new(big.Int).Set(stack[n-1])
+			stack = push(stack, value)
+		
+		case 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f: //SWAP1 to SWAP16
+			n := int(op - 0x90 + 1)
+			if len(stack) < n+1 {
+				return stack, false
+			}
+			stack[0], stack[n] = stack[n], stack[0]
+
+		case 0x5b : // JUMPDEST
+
+		case 0x56 : // JUMP
+			if len(stack) < 1 {
+				return stack, false
+			}
+			var dest *big.Int
+			stack, dest = pop(stack)
+			destPC := int(dest.Uint64())
+			if !validJumpDests[destPC] {
+				return stack, false 
+			}
+			pc = destPC
+
+		case 0x57 : // JUMPI
 			if len(stack) < 2 {
 				return stack, false
 			}
-			a := stack[0]
-			stack = push(stack, a)
+			var dest, cond *big.Int
+			stack, dest = pop(stack)
+			stack, cond = pop(stack)
+			if cond.Sign() != 0 {
+				destPC := int(dest.Uint64())
+				if !validJumpDests[destPC] {
+					return stack, false
+				}
+				pc = destPC
+			}
 
+		case 0x58 : // PC
+			stack = push(stack, big.NewInt(int64(pc-1))) 
+
+		case 0x59: // MSIZE
+			stack = push(stack, big.NewInt(int64(len(memory))))
+
+		case 0x20: // SHA3
+			if len(stack) < 2 {
+				return stack, false
+			}
+			var offset, size *big.Int
+			stack, offset = pop(stack)
+			stack, size = pop(stack)
+			off := int(offset.Uint64())
+			sz := int(size.Uint64())
+			
+			var data []byte
+			if sz > 0 {
+				memory = expandMemory(memory, off, sz)
+				data = memory[off : off+sz]
+			}
+			hash := sha3.NewLegacyKeccak256()
+			hash.Write(data)
+			hashBytes := hash.Sum(nil)
+			stack = push(stack, new(big.Int).SetBytes(hashBytes))
+
+		case 0x5a : // GAS
+			maxUint256 := new(big.Int).Sub(uint256, big.NewInt(1))
+			stack = push(stack, maxUint256)
+         
+		case 0x52 : // MSTORE
+			if len(stack) < 2 {
+				return stack, false
+			}
+			var offset *big.Int
+			var value *big.Int
+			stack, offset = pop(stack)
+			stack, value = pop(stack)
+			off := int(offset.Uint64())
+			memory = expandMemory(memory, off, 32)
+			valueBytes := value.Bytes()
+			padded := make([]byte, 32)
+			copy(padded[32-len(valueBytes):], valueBytes)
+			copy(memory[off:off+32], padded)
+
+		case 0x51 : // MLOAD
+			if len(stack) < 1 {
+				return stack, false
+			}
+			var offset *big.Int
+			stack, offset = pop(stack)
+			off := int(offset.Uint64())
+			memory = expandMemory(memory, off, 32)
+			value := new(big.Int).SetBytes(memory[off : off+32])
+			stack = push(stack, value)
+
+		case 0x53 : // MSTORE8
+			if len(stack) < 2 {
+				return stack, false
+			}
+			var offset *big.Int
+			var value *big.Int
+			stack, offset = pop(stack)
+			stack, value = pop(stack)
+			off := int(offset.Uint64())
+			memory = expandMemory(memory, off, 1)
+			valueBytes := value.Bytes()
+			if len(valueBytes) > 0 {
+				memory[off] = valueBytes[len(valueBytes)-1]
+			} else {
+				memory[off] = 0
+			}
+
+		case 0x30: // ADDRESS
+			if tx.To != nil {
+				stack = push(stack, new(big.Int).Set(tx.To))
+			} else {
+				stack = push(stack, big.NewInt(0))
+			}
+
+		case 0x33: // CALLER
+			if tx.From != nil {
+				stack = push(stack, new(big.Int).Set(tx.From))
+			} else {
+				stack = push(stack, big.NewInt(0))
+			}
+
+		case 0x32: // ORIGIN
+			if tx.Origin != nil {
+				stack = push(stack, new(big.Int).Set(tx.Origin))
+			} else {
+				stack = push(stack, big.NewInt(0))
+			}
+			
+		case 0x3a: // GASPRICE
+			if tx.GasPrice != nil {
+				stack = push(stack, new(big.Int).Set(tx.GasPrice))
+			} else {
+				stack = push(stack, big.NewInt(0))
+			}
+
+		case 0x34: // CALLVALUE
+			if tx.Value != nil {
+				stack = push(stack, new(big.Int).Set(tx.Value))
+			} else {
+				stack = push(stack, big.NewInt(0))
+			}
+
+		case 0x36: // CALLDATASIZE
+			stack = push(stack, big.NewInt(int64(len(tx.Data))))
+
+		case 0x35: // CALLDATALOAD
+			if len(stack) < 1 {
+				return stack, false
+			}
+			var offset *big.Int
+			stack, offset = pop(stack)
+			off := int(offset.Uint64())
+			
+			res := make([]byte, 32)
+			for i := 0; i < 32; i++ {
+				if off+i < len(tx.Data) {
+					res[i] = tx.Data[off+i]
+				} else {
+					res[i] = 0
+				}
+			}
+			stack = push(stack, new(big.Int).SetBytes(res))
+
+		case 0x37: // CALLDATACOPY
+			if len(stack) < 3 {
+				return stack, false
+			}
+			var destOffset, dataOffset, size *big.Int
+			stack, destOffset = pop(stack)
+			stack, dataOffset = pop(stack)
+			stack, size = pop(stack)
+			
+			destOff := int(destOffset.Uint64())
+			dataOff := int(dataOffset.Uint64())
+			sz := int(size.Uint64())
+			
+			if sz > 0 {
+				memory = expandMemory(memory, destOff, sz)
+				for i := 0; i < sz; i++ {
+					if dataOff+i < len(tx.Data) {
+						memory[destOff+i] = tx.Data[dataOff+i]
+					} else {
+						memory[destOff+i] = 0
+					}
+				}
+			}
+
+
+		default:
+			return stack, false	
 		}
 		_ = op // delete this; it's only here to make the compiler think you're already using `op`
 	}

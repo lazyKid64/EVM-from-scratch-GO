@@ -12,10 +12,20 @@ import (
 )
 
 type testCase struct {
-	Name string `json:"name"`
-	Hint string `json:"hint"`
-	Code code   `json:"code"`
-	Want want   `json:"expect"`
+	Name string  `json:"name"`
+	Hint string  `json:"hint"`
+	Tx   *txJSON `json:"tx"`
+	Code code    `json:"code"`
+	Want want    `json:"expect"`
+}
+
+type txJSON struct {
+	To       *hexBigInt `json:"to"`
+	From     *hexBigInt `json:"from"`
+	Origin   *hexBigInt `json:"origin"`
+	GasPrice *hexBigInt `json:"gasprice"`
+	Value    *hexBigInt `json:"value"`
+	Data     string     `json:"data"`
 }
 
 type code struct {
@@ -92,7 +102,17 @@ func TestEVM(t *testing.T) {
 				fatalAndBugReport(t, "hex.DecodeString(%q) error %v", tt.Code.Bin, err)
 			}
 
-			got, gotSuccess := Evm(bin)
+			var tx Tx
+			if tt.Tx != nil {
+				if tt.Tx.To != nil && tt.Tx.To.Int != nil { tx.To = tt.Tx.To.Int }
+				if tt.Tx.From != nil && tt.Tx.From.Int != nil { tx.From = tt.Tx.From.Int }
+				if tt.Tx.Origin != nil && tt.Tx.Origin.Int != nil { tx.Origin = tt.Tx.Origin.Int }
+				if tt.Tx.GasPrice != nil && tt.Tx.GasPrice.Int != nil { tx.GasPrice = tt.Tx.GasPrice.Int }
+				if tt.Tx.Value != nil && tt.Tx.Value.Int != nil { tx.Value = tt.Tx.Value.Int }
+				if tt.Tx.Data != "" { tx.Data, _ = hex.DecodeString(tt.Tx.Data) }
+			}
+
+			got, gotSuccess := Evm(bin, tx)
 			if gotSuccess != tt.Want.Success {
 				t.Errorf("Evm(…) got success = %t; want %t", gotSuccess, tt.Want.Success)
 			}
