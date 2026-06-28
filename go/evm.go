@@ -69,9 +69,20 @@ type Tx struct {
 	Value    *big.Int
 	Data     []byte
 }
+type Block struct {
+    Basefee    *big.Int
+    Coinbase   *big.Int
+    Timestamp  *big.Int
+    Number     *big.Int
+    Difficulty *big.Int
+    GasLimit   *big.Int
+    ChainId    *big.Int
+}
+
 
 // Run runs the EVM code and returns the stack and a success indicator.
-func Evm(code []byte, tx Tx) ([]*big.Int, bool) {
+func Evm(code []byte, tx Tx , block Block) ([]*big.Int, bool) {
+
 	var stack []*big.Int
 	var memory []byte
 	pc := 0
@@ -616,7 +627,7 @@ func Evm(code []byte, tx Tx) ([]*big.Int, bool) {
 				stack = push(stack, big.NewInt(0))
 			}
 			
-		case 0x3a: // GASPRICE
+		case 0x3A: // GASPRICE
 			if tx.GasPrice != nil {
 				stack = push(stack, new(big.Int).Set(tx.GasPrice))
 			} else {
@@ -640,7 +651,6 @@ func Evm(code []byte, tx Tx) ([]*big.Int, bool) {
 			var offset *big.Int
 			stack, offset = pop(stack)
 			off := int(offset.Uint64())
-			
 			res := make([]byte, 32)
 			for i := 0; i < 32; i++ {
 				if off+i < len(tx.Data) {
@@ -675,6 +685,65 @@ func Evm(code []byte, tx Tx) ([]*big.Int, bool) {
 				}
 			}
 
+		case 0x48 : // BASE FEE
+			if block.Basefee != nil {
+				stack = push(stack, new(big.Int).Set(block.Basefee))
+			} else {
+				stack = push(stack, big.NewInt(0))
+			}
+
+		case 0x41: // COINBASE
+			if block.Coinbase != nil {
+				stack = push(stack, new(big.Int).Set(block.Coinbase))
+			} else {
+				stack = push(stack, big.NewInt(0))
+			}
+			
+		case 0x42: // TIMESTAMP
+			if block.Timestamp != nil {
+				stack = push(stack, new(big.Int).Set(block.Timestamp))
+			} else {
+				stack = push(stack, big.NewInt(0))
+			}
+
+		case 0x43: // NUMBER
+			if block.Number != nil {
+				stack = push(stack, new(big.Int).Set(block.Number))
+			} else {
+				stack = push(stack, big.NewInt(0))
+			}
+
+		case 0x44: // DIFFICULTY
+			if block.Difficulty != nil {
+				stack = push(stack, new(big.Int).Set(block.Difficulty))
+			} else {
+				stack = push(stack, big.NewInt(0))
+			}
+
+		case 0x45: // GASLIMIT
+			if block.GasLimit != nil {
+				stack = push(stack, new(big.Int).Set(block.GasLimit))
+			} else {
+				stack = push(stack, big.NewInt(0))
+			}
+
+		case 0x46: // CHAINID
+			if block.ChainId != nil {
+				stack = push(stack, new(big.Int).Set(block.ChainId))
+			} else {
+				stack = push(stack, big.NewInt(0))
+			}
+
+		case 0x40: // BLOCKHASH
+			if len(stack) < 1 {
+				return stack, false
+			}
+			stack, _ = pop(stack)
+			stack = push(stack, big.NewInt(0))
+
+			
+		
+			
 
 		default:
 			return stack, false	

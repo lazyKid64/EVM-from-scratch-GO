@@ -12,11 +12,22 @@ import (
 )
 
 type testCase struct {
-	Name string  `json:"name"`
-	Hint string  `json:"hint"`
-	Tx   *txJSON `json:"tx"`
-	Code code    `json:"code"`
-	Want want    `json:"expect"`
+	Name  string     `json:"name"`
+	Hint  string     `json:"hint"`
+	Tx    *txJSON    `json:"tx"`
+	Block *blockJSON `json:"block"`
+	Code  code       `json:"code"`
+	Want  want       `json:"expect"`
+}
+
+type blockJSON struct {
+	Basefee    *hexBigInt `json:"basefee"`
+	Coinbase   *hexBigInt `json:"coinbase"`
+	Timestamp  *hexBigInt `json:"timestamp"`
+	Number     *hexBigInt `json:"number"`
+	Difficulty *hexBigInt `json:"difficulty"`
+	GasLimit   *hexBigInt `json:"gaslimit"`
+	ChainId    *hexBigInt `json:"chainid"`
 }
 
 type txJSON struct {
@@ -112,7 +123,18 @@ func TestEVM(t *testing.T) {
 				if tt.Tx.Data != "" { tx.Data, _ = hex.DecodeString(tt.Tx.Data) }
 			}
 
-			got, gotSuccess := Evm(bin, tx)
+			var block Block
+			if tt.Block != nil {
+				if tt.Block.Basefee != nil && tt.Block.Basefee.Int != nil { block.Basefee = tt.Block.Basefee.Int }
+				if tt.Block.Coinbase != nil && tt.Block.Coinbase.Int != nil { block.Coinbase = tt.Block.Coinbase.Int }
+				if tt.Block.Timestamp != nil && tt.Block.Timestamp.Int != nil { block.Timestamp = tt.Block.Timestamp.Int }
+				if tt.Block.Number != nil && tt.Block.Number.Int != nil { block.Number = tt.Block.Number.Int }
+				if tt.Block.Difficulty != nil && tt.Block.Difficulty.Int != nil { block.Difficulty = tt.Block.Difficulty.Int }
+				if tt.Block.GasLimit != nil && tt.Block.GasLimit.Int != nil { block.GasLimit = tt.Block.GasLimit.Int }
+				if tt.Block.ChainId != nil && tt.Block.ChainId.Int != nil { block.ChainId = tt.Block.ChainId.Int }
+			}
+
+			got, gotSuccess := Evm(bin, tx, block)
 			if gotSuccess != tt.Want.Success {
 				t.Errorf("Evm(…) got success = %t; want %t", gotSuccess, tt.Want.Success)
 			}
