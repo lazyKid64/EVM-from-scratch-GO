@@ -3,6 +3,7 @@ package evm
 import (
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"os"
 	"testing"
@@ -16,8 +17,15 @@ type testCase struct {
 	Hint  string     `json:"hint"`
 	Tx    *txJSON    `json:"tx"`
 	Block *blockJSON `json:"block"`
+	State map[string]*accountJSON `json:"state"`
 	Code  code       `json:"code"`
 	Want  want       `json:"expect"`
+}
+
+type accountJSON struct {
+	Balance *hexBigInt            `json:"balance"`
+	Code    *code                 `json:"code"`
+	Storage map[string]*hexBigInt `json:"storage"`
 }
 
 type blockJSON struct {
@@ -46,8 +54,21 @@ type code struct {
 
 type want struct {
 	Stack   []hexBigInt `json:"stack"`
+	Logs    []logJSON   `json:"logs"`
 	Success bool        `json:"success"`
 	Return  string      `json:"return"`
+}
+
+type logJSON struct {
+	Address *hexBigInt   `json:"address"`
+	Data    string       `json:"data"`
+	Topics  []*hexBigInt `json:"topics"`
+}
+
+type stringLog struct {
+	Address string
+	Data    string
+	Topics  []string
 }
 
 // A hexBigInt is a *big.Int that can be read from a JSON hex string.
@@ -134,12 +155,90 @@ func TestEVM(t *testing.T) {
 				if tt.Block.ChainId != nil && tt.Block.ChainId.Int != nil { block.ChainId = tt.Block.ChainId.Int }
 			}
 
-			got, gotSuccess := Evm(bin, tx, block)
+			state := make(State)
+			if tt.State != nil {
+				for addr, acc := range tt.State {
+					var account Account
+					if acc != nil {
+						if acc.Balance != nil && acc.Balance.Int != nil {
+							account.Balance = acc.Balance.Int
+						}
+						if acc.Code != nil && acc.Code.Bin != "" {
+							account.Code, _ = hex.DecodeString(acc.Code.Bin)
+						}
+						if acc.Storage != nil {
+							account.Storage = make(map[string]*big.Int)
+							for k, v := range acc.Storage {
+								keyBig := new(big.Int)
+								keyBig.SetString(k[2:], 16)
+								keyStr := fmt.Sprintf("0x%064x", keyBig)
+								if v != nil && v.Int != nil {
+									account.Storage[keyStr] = v.Int
+								}
+							}
+						}
+					}
+					state[addr] = account
+				}
+			}
+
+			got, gotSuccess, gotLogs, gotReturn := Evm(bin, tx, block, state)
 			if gotSuccess != tt.Want.Success {
 				t.Errorf("Evm(…) got success = %t; want %t", gotSuccess, tt.Want.Success)
 			}
 			if diff := cmp.Diff(toHexStrings(tt.Want.StackInts()), toHexStrings(got), cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("Evm(…) stack mismatch; diff (-want +got)\n%s", diff)
+			}
+
+			// Format expected logs
+			var wantStrLogs []stringLog
+			if tt.Want.Logs != nil {
+				for _, wl := range tt.Want.Logs {
+					var addr string
+					if wl.Address != nil && wl.Address.Int != nil {
+						addr = fmt.Sprintf("0x%040x", wl.Address.Int)
+					}
+					var topics []string
+					for _, tpc := range wl.Topics {
+						if tpc != nil && tpc.Int != nil {
+							topics = append(topics, fmt.Sprintf("0x%064x", tpc.Int))
+						}
+					}
+					wantStrLogs = append(wantStrLogs, stringLog{
+						Address: addr,
+						Data:    wl.Data,
+						Topics:  topics,
+					})
+				}
+			}
+
+			// Format actual logs
+			var gotStrLogs []stringLog
+			for _, gl := range gotLogs {
+				var addr string
+				if gl.Address != nil {
+					addr = fmt.Sprintf("0x%040x", gl.Address)
+				}
+				var topics []string
+				for _, tpc := range gl.Topics {
+					if tpc != nil {
+						topics = append(topics, fmt.Sprintf("0x%064x", tpc))
+					}
+				}
+				gotStrLogs = append(gotStrLogs, stringLog{
+					Address: addr,
+					Data:    hex.EncodeToString(gl.Data),
+					Topics:  topics,
+				})
+			}
+
+			if diff := cmp.Diff(wantStrLogs, gotStrLogs, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("Evm(…) logs mismatch; diff (-want +got)\n%s", diff)
+			}
+
+			gotReturnHex := hex.EncodeToString(gotReturn)
+			if gotReturnHex != tt.Want.Return {
+				t.Errorf("Evm(…) return data mismatch; got %s, want %s", gotReturnHex, tt.Want.Return)
 			}
 
 			if t.Failed() {
